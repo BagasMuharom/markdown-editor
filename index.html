@@ -18,6 +18,8 @@
     <!-- Highlight.js untuk Syntax Highlighting pada Preview -->
     <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- Tambahkan Ekstensi YAML secara eksplisit -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
 
     <!-- Ace Editor Assets -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.min.js"></script>
@@ -320,7 +322,7 @@
 
         createApp({
             setup() {
-                const initialText = "# MD Editor\n\nSelamat datang! Gunakan menu bar di atas untuk memulai.\n\n- **File**: Buat, Buka, atau Simpan dokumen.\n- **Edit**: Cari atau Ganti teks pada dokumen aktif.\n- **View**: Tampilkan atau Sembunyikan Pratinjau HTML.";
+                const initialText = "---\ntitle: MD Editor\nversion: 1.0.0\ntags: [markdown, editor, vue]\n---\n\n# MD Editor\n\nSelamat datang! Gunakan menu bar di atas untuk memulai.\n\n- **File**: Buat, Buka, atau Simpan dokumen.\n- **Edit**: Cari atau Ganti teks pada dokumen aktif.\n- **View**: Tampilkan atau Sembunyikan Pratinjau HTML.";
                 
                 const docs = ref([{ id: 1, name: 'Welcome.md', content: initialText }]);
                 const activeDocId = ref(1);
@@ -363,7 +365,16 @@
                 const lineCount = computed(() => activeContent.value.split('\n').length);
 
                 const sanitizedHtml = computed(() => {
-                    const rawHtml = marked.parse(activeContent.value);
+                    let textToParse = activeContent.value;
+                    
+                    // Pre-process YAML Frontmatter:
+                    // Jika dokumen diawali dengan '---', ubah blok tersebut menjadi Markdown Code Block khusus YAML
+                    const frontmatterRegex = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+                    if (frontmatterRegex.test(textToParse)) {
+                        textToParse = textToParse.replace(frontmatterRegex, '```yaml\n$1\n```\n');
+                    }
+
+                    const rawHtml = marked.parse(textToParse);
                     return DOMPurify.sanitize(rawHtml);
                 });
 
@@ -627,7 +638,7 @@
                         const themeCss = darkMode.value 
                             ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css' 
                             : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
-                        content = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${doc.name}</title><script src="https://cdn.tailwindcss.com?plugins=typography"><\/script><link rel="stylesheet" href="${themeCss}"><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"><\/script><script>document.addEventListener('DOMContentLoaded', () => { hljs.highlightAll(); });<\/script></head><body class="p-10"><article class="prose prose-blue max-w-none prose-pre:p-0 prose-pre:bg-transparent prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700">${sanitizedHtml.value}</article></body></html>`;
+                        content = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${doc.name}</title><script src="https://cdn.tailwindcss.com?plugins=typography"><\/script><link rel="stylesheet" href="${themeCss}"><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"><\/script><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"><\/script><script>document.addEventListener('DOMContentLoaded', () => { hljs.highlightAll(); });<\/script></head><body class="p-10"><article class="prose prose-blue max-w-none prose-pre:p-0 prose-pre:bg-transparent prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700">${sanitizedHtml.value}</article></body></html>`;
                     }
                     const blob = new Blob([content], { type: type === 'md' ? 'text/markdown' : 'text/html' });
                     const url = URL.createObjectURL(blob);
