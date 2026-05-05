@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MD Editor</title>
+    <!-- Tailwind CSS & Typography Plugin -->
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Marked (Markdown Parser) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- DOMPurify (Sanitizer) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Highlight.js untuk Syntax Highlighting pada Preview -->
+    <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+    <!-- Ace Editor Assets -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/mode-markdown.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/theme-tomorrow_night.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/theme-chrome.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        mono: ['Fira Code', 'Courier New', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+    
+    <style type="text/tailwindcss">
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap');
+        
+        /* Ace Editor Container Styling */
+        #ace-editor {
+            width: 100%;
+            height: 100%;
+            font-family: 'Fira Code', monospace;
+            font-size: 14px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #666; }
+        
+        #preview-area { min-height: 100%; }
+
+        /* Drag Overlay Animation */
+        .drag-overlay-enter-active, .drag-overlay-leave-active { transition: opacity 0.3s ease, transform 0.3s ease; }
+        .drag-overlay-enter-from, .drag-overlay-leave-to { opacity: 0; transform: scale(1.05); }
+
+        /* Fix for Ace in Dark Mode */
+        .dark .ace_gutter { background: #1a1a1a !important; color: #666 !important; }
+        .dark .ace_content { background: #1d1f21 !important; }
+
+        /* Override Tailwind Prose untuk Highlight.js */
+        .prose code::before { content: none !important; }
+        .prose code::after { content: none !important; }
+        .prose code { font-weight: 500 !important; }
+        .prose pre {
+            background-color: transparent !important;
+            padding: 0 !important;
+            margin: 1.5em 0;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .dark .prose pre { border-color: #374151; }
+        .prose pre code.hljs {
+            padding: 1rem !important;
+            display: block;
+            overflow-x: auto;
+        }
+        
+        .toolbar-btn {
+            @apply p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-white transition-colors shrink-0;
+        }
+
+        /* Minimap Styles */
+        .minimap-hide-scroll::-webkit-scrollbar { display: none; }
+        .minimap-hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
+    <div id="app">
+        <!-- Input File Tersembunyi (Dipindahkan ke Menu Bar) -->
+        <input type="file" ref="fileInput" @change="handleFileUpload" accept=".md,.txt" class="hidden">
+
+        <!-- Drag and Drop Overlay -->
+        <transition name="drag-overlay">
+            <div v-if="isDragging" class="fixed inset-0 z-50 flex items-center justify-center bg-blue-600/20 backdrop-blur-sm border-4 border-dashed border-blue-500 m-4 rounded-2xl pointer-events-none">
+                <div class="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4 animate-bounce">
+                    <div class="bg-blue-100 dark:bg-blue-900/30 p-4 rounded-full">
+                        <i data-lucide="file-up" class="w-12 h-12 text-blue-600"></i>
+                    </div>
+                    <p class="text-xl font-bold text-gray-800 dark:text-white">Lepaskan Berkas Markdown</p>
+                    <p class="text-sm text-gray-500">Berkas akan dibuka di tab baru</p>
+                </div>
+            </div>
+        </transition>
+
+        <div class="flex flex-col h-screen" @dragover.prevent="onDragOver" @dragenter.prevent="onDragEnter" @dragleave.prevent="onDragLeave" @drop.prevent="onDrop">
+            <!-- Header -->
+            <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex items-center justify-between shadow-sm z-20 shrink-0">
+                <div class="flex items-center gap-6">
+                    <!-- Title -->
+                    <div class="flex items-center gap-2">
+                        <div class="bg-blue-600 p-1.5 rounded-lg">
+                            <i data-lucide="edit-3" class="text-white w-5 h-5"></i>
+                        </div>
+                        <h1 class="text-xl font-bold text-gray-800 dark:text-white hidden sm:block text-nowrap">MD Editor</h1>
+                    </div>
+
+                    <!-- Menu Bar -->
+                    <div class="flex items-center gap-1 menu-container text-sm font-medium text-gray-600 dark:text-gray-300">
+                        <!-- File Menu -->
+                        <div class="relative">
+                            <button @click="toggleMenu('file')" :class="{'bg-gray-100 dark:bg-gray-700': activeMenu === 'file'}" class="px-3 py-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">File</button>
+                            <div v-show="activeMenu === 'file'" class="absolute top-full left-0 mt-1 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg border border-gray-200 dark:border-gray-700 py-1.5 z-50">
+                                <button @click="createDoc('Untitled.md'); activeMenu = null" class="w-full text-left px-4 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2">
+                                    <i data-lucide="file-plus" class="w-4 h-4"></i> New File
+                                </button>
+                                <button @click="triggerFileInput(); activeMenu = null" class="w-full text-left px-4 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2">
+                                    <i data-lucide="folder-open" class="w-4 h-4"></i> Open File...
+                                </button>
+                                <div class="my-1 border-t border-gray-200 dark:border-gray-700"></div>
+                                <div class="px-4 py-1 text-xs text-gray-400 dark:text-gray-500 uppercase tracking-wider">Save As</div>
+                                <button @click="exportFile('md'); activeMenu = null" class="w-full text-left px-4 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2">
+                                    <i data-lucide="download" class="w-4 h-4"></i> Document (.md)
+                                </button>
+                                <button @click="exportFile('html'); activeMenu = null" class="w-full text-left px-4 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2">
+                                    <i data-lucide="file-code" class="w-4 h-4"></i> HTML Page (.html)
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Edit Menu -->
+                        <div class="relative">
+                            <button @click="toggleMenu('edit')" :class="{'bg-gray-100 dark:bg-gray-700': activeMenu === 'edit'}" class="px-3 py-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">Edit</button>
+                            <div v-show="activeMenu === 'edit'" class="absolute top-full left-0 mt-1 w-44 bg-white dark:bg-gray-800 rounded-md shadow-lg border border-gray-200 dark:border-gray-700 py-1.5 z-50">
+                                <button @click="openFindModal(false)" class="w-full text-left px-4 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between">
+                                    <span class="flex items-center gap-2"><i data-lucide="search" class="w-4 h-4"></i> Find</span>
+                                    <span class="text-xs text-gray-400">Ctrl+F</span>
+                                </button>
+                                <button @click="openFindModal(true)" class="w-full text-left px-4 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between">
+                                    <span class="flex items-center gap-2"><i data-lucide="replace" class="w-4 h-4"></i> Replace</span>
+                                    <span class="text-xs text-gray-400">Ctrl+H</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- View Menu -->
+                        <div class="relative">
+                            <button @click="toggleMenu('view')" :class="{'bg-gray-100 dark:bg-gray-700': activeMenu === 'view'}" class="px-3 py-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">View</button>
+                            <div v-show="activeMenu === 'view'" class="absolute top-full left-0 mt-1 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg border border-gray-200 dark:border-gray-700 py-1.5 z-50">
+                                <label class="w-full text-left px-4 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 cursor-pointer select-none">
+                                    <input type="checkbox" v-model="showPreview" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                    HTML Preview
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <button @click="toggleDarkMode" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                        <i :data-lucide="darkMode ? 'sun' : 'moon'" class="w-5 h-5 text-gray-600 dark:text-yellow-400"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Container Wrapper untuk Tab, Modal Find, dan Editor -->
+            <div class="flex-1 flex flex-col relative overflow-hidden">
+                
+                <!-- Prompt / Modal Find & Replace (Posisi Absolute Sejajar Tab) -->
+                <div v-if="showFindModal" class="absolute top-1 left-1/2 -translate-x-1/2 z-30 flex flex-col gap-1">
+                    <div class="flex flex-col bg-white dark:bg-[#1d1f21] rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-sm">
+                        
+                        <!-- Find Row -->
+                        <div class="flex items-center">
+                            <input 
+                                ref="findInputRef"
+                                v-model="findText" 
+                                @input="doFind" 
+                                @keyup.enter="findNext" 
+                                placeholder="Find..." 
+                                class="px-3 py-1.5 bg-transparent outline-none text-gray-800 dark:text-gray-200 w-48 placeholder-gray-400"
+                            >
+                            <div class="flex items-center border-l border-gray-200 dark:border-gray-700">
+                                <button @click="findPrev" class="px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"><i data-lucide="arrow-up" class="w-4 h-4"></i></button>
+                                <button @click="findNext" class="px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"><i data-lucide="arrow-down" class="w-4 h-4"></i></button>
+                            </div>
+                            <button @click="closeFindModal" class="px-2 py-1.5 border-l border-gray-200 dark:border-gray-700 hover:bg-red-50 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button>
+                        </div>
+
+                        <!-- Replace Row -->
+                        <div v-if="isReplaceMode" class="flex items-center border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                            <input 
+                                v-model="replaceText" 
+                                @keyup.enter="doReplace"
+                                placeholder="Replace with..." 
+                                class="px-3 py-1.5 bg-transparent outline-none text-gray-800 dark:text-gray-200 w-48 placeholder-gray-400"
+                            >
+                            <div class="flex items-center border-l border-gray-200 dark:border-gray-700 flex-1">
+                                <button @click="doReplace" class="flex-1 px-2 py-1.5 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 text-xs font-medium transition-colors">Replace</button>
+                                <button @click="doReplaceAll" class="flex-1 px-2 py-1.5 border-l border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 text-xs font-medium transition-colors">All</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Document Tabs -->
+                <div class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-end px-2 pt-2 gap-1 overflow-x-auto custom-scrollbar shrink-0">
+                    <div 
+                        v-for="doc in docs" 
+                        :key="doc.id"
+                        @click="switchDoc(doc.id)"
+                        :class="[
+                            'group flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 cursor-pointer transition-colors whitespace-nowrap select-none',
+                            activeDocId === doc.id 
+                                ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-white dark:bg-[#1d1f21] rounded-t-lg' 
+                                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-t-lg'
+                        ]"
+                    >
+                        <i data-lucide="file-text" class="w-3.5 h-3.5 opacity-70"></i>
+                        {{ doc.name }}
+                        <button 
+                            @click="(e) => closeDoc(doc.id, e)" 
+                            class="p-0.5 ml-1 rounded-md text-gray-400 hover:bg-gray-200 hover:text-red-500 dark:hover:bg-gray-600 transition-colors"
+                            title="Tutup tab"
+                        >
+                            <i data-lucide="x" class="w-3 h-3"></i>
+                        </button>
+                    </div>
+                    <button 
+                        @click="createDoc('Untitled.md')" 
+                        class="p-2 mb-1 ml-1 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md transition-colors"
+                        title="Dokumen Baru"
+                    >
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                    </button>
+                </div>
+
+                <!-- Toolbar -->
+                <div class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 py-1.5 flex items-center gap-1 overflow-x-auto custom-scrollbar shrink-0">
+                    <button @click="insertFormatting('**', '**')" class="toolbar-btn" title="Bold"><i data-lucide="bold" class="w-4 h-4"></i></button>
+                    <button @click="insertFormatting('*', '*')" class="toolbar-btn" title="Italic"><i data-lucide="italic" class="w-4 h-4"></i></button>
+                    <button @click="insertFormatting('# ', '')" class="toolbar-btn" title="Heading"><i data-lucide="heading" class="w-4 h-4"></i></button>
+                    <div class="h-6 w-px bg-gray-300 dark:bg-gray-600 mx-1"></div>
+                    <button @click="insertFormatting('[', '](url)')" class="toolbar-btn" title="Link"><i data-lucide="link" class="w-4 h-4"></i></button>
+                    <button @click="insertFormatting('![alt](', ')')" class="toolbar-btn" title="Image"><i data-lucide="image" class="w-4 h-4"></i></button>
+                    <button @click="insertFormatting('\n```\n', '\n```\n')" class="toolbar-btn" title="Code Block"><i data-lucide="code" class="w-4 h-4"></i></button>
+                    <div class="h-6 w-px bg-gray-300 dark:bg-gray-600 mx-1"></div>
+                    <button @click="insertFormatting('- ', '')" class="toolbar-btn" title="List"><i data-lucide="list" class="w-4 h-4"></i></button>
+                    <button @click="insertFormatting('> ', '')" class="toolbar-btn" title="Quote"><i data-lucide="quote" class="w-4 h-4"></i></button>
+                </div>
+
+                <!-- Content Area -->
+                <div class="flex-1 flex overflow-hidden relative">
+                    <!-- Mobile Tabs (Tampil hanya di hp jika mode split dimatikan) -->
+                    <div class="sm:hidden absolute bottom-4 left-1/2 -translate-x-1/2 flex bg-white dark:bg-gray-800 shadow-xl rounded-full p-1 border border-gray-200 dark:border-gray-700 z-20">
+                        <button @click="activeTab = 'editor'" :class="activeTab === 'editor' ? 'bg-blue-600 text-white' : 'text-gray-500 dark:text-gray-300'" class="px-4 py-2 rounded-full text-sm font-medium transition-all">Edit</button>
+                        <button @click="activeTab = 'preview'" :class="activeTab === 'preview' ? 'bg-blue-600 text-white' : 'text-gray-500 dark:text-gray-300'" class="px-4 py-2 rounded-full text-sm font-medium transition-all">Preview</button>
+                    </div>
+
+                    <!-- LEFT PANEL (Editor + Minimap) -->
+                    <div 
+                        class="h-full flex flex-col bg-white dark:bg-[#1d1f21]"
+                        :class="{'w-full': !isLargeScreen || !showPreview, 'sm:w-1/2 border-r border-gray-200 dark:border-gray-700': isLargeScreen && showPreview}"
+                        v-show="(!isLargeScreen && activeTab === 'editor') || isLargeScreen"
+                    >
+                        <div class="flex-1 flex overflow-hidden">
+                            <!-- Ace Editor -->
+                            <div id="ace-editor" class="flex-1"></div>
+                            
+                            <!-- Vanilla JS Minimap -->
+                            <div ref="minimapContainer" class="hidden md:block w-20 lg:w-24 h-full bg-gray-50 dark:bg-[#151618] border-l border-gray-200 dark:border-gray-700 relative overflow-y-auto minimap-hide-scroll select-none cursor-pointer" @mousedown="onMinimapMouseDown">
+                                <div ref="minimapScrollWrapper" class="relative w-full">
+                                    <div ref="minimapContent" class="w-full text-[2.5px] leading-[3px] text-gray-400 dark:text-gray-600 whitespace-pre-wrap break-words px-1 py-2 pointer-events-none font-mono opacity-80" style="word-break: break-all;">
+                                        {{ activeContent }}
+                                    </div>
+                                    <div ref="minimapSlider" class="absolute top-0 left-0 w-full bg-blue-500/20 border-y border-blue-500/50 pointer-events-none" style="min-height: 10px;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-100 dark:bg-gray-800 text-[10px] text-gray-500 px-4 py-1 border-t border-gray-200 dark:border-gray-700 flex justify-between shrink-0">
+                            <span>Chars: {{ activeContent.length }}</span>
+                            <span>Lines: {{ lineCount }}</span>
+                        </div>
+                    </div>
+
+                    <!-- RIGHT PANEL (Preview) -->
+                    <div 
+                        class="w-full sm:w-1/2 h-full overflow-y-auto bg-white dark:bg-gray-900 custom-scrollbar p-6 sm:p-10" 
+                        v-show="(!isLargeScreen && activeTab === 'preview') || (isLargeScreen && showPreview)" 
+                        @scroll="handlePreviewScroll" 
+                        ref="previewContainer"
+                    >
+                        <div id="preview-area" class="prose prose-blue dark:prose-invert max-w-none prose-pre:bg-gray-100 dark:prose-pre:bg-gray-800" v-html="sanitizedHtml"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, onUnmounted, nextTick, watch } = Vue;
+
+        createApp({
+            setup() {
+                const initialText = "# MD Editor\n\nSelamat datang! Gunakan menu bar di atas untuk memulai.\n\n- **File**: Buat, Buka, atau Simpan dokumen.\n- **Edit**: Cari atau Ganti teks pada dokumen aktif.\n- **View**: Tampilkan atau Sembunyikan Pratinjau HTML.";
+                
+                const docs = ref([{ id: 1, name: 'Welcome.md', content: initialText }]);
+                const activeDocId = ref(1);
+                
+                const darkMode = ref(false);
+                const activeTab = ref('editor'); 
+                const isLargeScreen = ref(window.innerWidth >= 640);
+                const previewContainer = ref(null);
+                const fileInput = ref(null);
+                const isDragging = ref(false);
+
+                // Fitur Baru: Menu Bar & Preview Toggle
+                const activeMenu = ref(null);
+                const showPreview = ref(true);
+
+                // Fitur Baru: Find & Replace Modal
+                const showFindModal = ref(false);
+                const isReplaceMode = ref(false);
+                const findText = ref('');
+                const replaceText = ref('');
+                const findInputRef = ref(null);
+                
+                // Minimap Refs
+                const minimapContainer = ref(null);
+                const minimapScrollWrapper = ref(null);
+                const minimapSlider = ref(null);
+                const minimapContent = ref(null);
+
+                let dragCounter = 0;
+                let aceInstance = null;
+                let isSyncing = false;
+                let isSwitchingTab = false; 
+                let isDraggingMinimap = false;
+
+                const activeContent = computed(() => {
+                    const doc = docs.value.find(d => d.id === activeDocId.value);
+                    return doc ? doc.content : '';
+                });
+
+                const lineCount = computed(() => activeContent.value.split('\n').length);
+
+                const sanitizedHtml = computed(() => {
+                    const rawHtml = marked.parse(activeContent.value);
+                    return DOMPurify.sanitize(rawHtml);
+                });
+
+                // --- Menu Handlers ---
+                const toggleMenu = (menu) => {
+                    activeMenu.value = activeMenu.value === menu ? null : menu;
+                };
+
+                const closeMenuOutside = (e) => {
+                    if (!e.target.closest('.menu-container')) {
+                        activeMenu.value = null;
+                    }
+                };
+
+                // Resize Ace jika ukuran panel berubah (misal toggle preview)
+                watch(showPreview, () => {
+                    nextTick(() => { if (aceInstance) aceInstance.resize(); });
+                });
+
+                // --- Find & Replace Handlers ---
+                const openFindModal = (replace = false) => {
+                    showFindModal.value = true;
+                    isReplaceMode.value = replace;
+                    activeMenu.value = null; 
+                    nextTick(() => {
+                        if (findInputRef.value) findInputRef.value.focus();
+                        if (aceInstance) {
+                            const selected = aceInstance.getSelectedText();
+                            if (selected) {
+                                findText.value = selected;
+                                doFind();
+                            }
+                        }
+                        // Render ulang ikon saat modal dimunculkan ke DOM
+                        lucide.createIcons();
+                    });
+                };
+
+                const closeFindModal = () => {
+                    showFindModal.value = false;
+                    if (aceInstance) aceInstance.focus();
+                };
+
+                const doFind = () => {
+                    if (!aceInstance || !findText.value) return;
+                    aceInstance.find(findText.value, { backwards: false, wrap: true, caseSensitive: false, wholeWord: false, regExp: false });
+                };
+                const findNext = () => aceInstance?.findNext();
+                const findPrev = () => aceInstance?.findPrevious();
+                
+                const doReplace = () => {
+                    if (!aceInstance || !findText.value) return;
+                    aceInstance.replace(replaceText.value);
+                    aceInstance.findNext();
+                };
+                
+                const doReplaceAll = () => {
+                    if (!aceInstance || !findText.value) return;
+                    aceInstance.replaceAll(replaceText.value);
+                };
+
+                // --- Tab Logic ---
+                const createDoc = (name = 'Untitled.md', content = '') => {
+                    const newId = Date.now();
+                    docs.value.push({ id: newId, name, content });
+                    switchDoc(newId);
+                };
+
+                const switchDoc = (id) => {
+                    if (activeDocId.value === id) return;
+                    activeDocId.value = id;
+                    
+                    const activeDoc = docs.value.find(d => d.id === id);
+                    if (activeDoc && aceInstance) {
+                        isSwitchingTab = true;
+                        aceInstance.setValue(activeDoc.content, -1);
+                        isSwitchingTab = false;
+                        
+                        nextTick(() => { 
+                            updateMinimap(0); 
+                            lucide.createIcons();
+                        });
+                    }
+                };
+
+                const closeDoc = (id, event) => {
+                    event.stopPropagation(); 
+                    const idx = docs.value.findIndex(d => d.id === id);
+                    if (idx === -1) return;
+                    docs.value.splice(idx, 1);
+                    if (docs.value.length === 0) {
+                        createDoc();
+                    } else if (activeDocId.value === id) {
+                        const newIdx = Math.max(0, idx - 1);
+                        switchDoc(docs.value[newIdx].id);
+                    }
+                };
+
+                watch(sanitizedHtml, () => {
+                    nextTick(() => {
+                        if (previewContainer.value) {
+                            previewContainer.value.querySelectorAll('pre code').forEach((block) => {
+                                block.removeAttribute('data-highlighted');
+                                hljs.highlightElement(block);
+                            });
+                        }
+                    });
+                }, { immediate: true });
+
+                const toggleDarkMode = () => {
+                    darkMode.value = !darkMode.value;
+                    if (darkMode.value) {
+                        document.documentElement.classList.add('dark');
+                    } else {
+                        document.documentElement.classList.remove('dark');
+                    }
+                    if (aceInstance) aceInstance.setTheme(darkMode.value ? "ace/theme/tomorrow_night" : "ace/theme/chrome");
+                    
+                    document.getElementById('hljs-theme').href = darkMode.value 
+                        ? "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+                        : "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css";
+                    nextTick(() => lucide.createIcons());
+                };
+
+                // --- Vanilla JS Minimap Logic ---
+                const updateMinimap = (scrollTop) => {
+                    if (!minimapContainer.value || !minimapSlider.value || !minimapScrollWrapper.value || !aceInstance) return;
+                    const editorTotalH = aceInstance.session.getScreenLength() * aceInstance.renderer.lineHeight;
+                    const editorViewH = aceInstance.renderer.$size.scrollerHeight;
+                    if (editorTotalH <= 0) return;
+                    const minimapTotalH = minimapScrollWrapper.value.scrollHeight;
+                    const minimapViewH = minimapContainer.value.clientHeight;
+                    const heightRatio = minimapTotalH / editorTotalH;
+                    const sliderH = Math.max(editorViewH * heightRatio, 10); 
+                    const sliderY = scrollTop * heightRatio;
+                    minimapSlider.value.style.height = `${sliderH}px`;
+                    minimapSlider.value.style.transform = `translateY(${sliderY}px)`;
+                    if (minimapTotalH > minimapViewH) {
+                        const maxScrollEditor = editorTotalH - editorViewH;
+                        const scrollPct = maxScrollEditor > 0 ? scrollTop / maxScrollEditor : 0;
+                        minimapContainer.value.scrollTop = scrollPct * (minimapTotalH - minimapViewH);
+                    }
+                };
+
+                const scrollToPositionFromMinimap = (e) => {
+                    if (!minimapContainer.value || !minimapScrollWrapper.value || !aceInstance) return;
+                    const rect = minimapContainer.value.getBoundingClientRect();
+                    const y = e.clientY - rect.top;
+                    const contentY = y + minimapContainer.value.scrollTop;
+                    const minimapTotalH = minimapScrollWrapper.value.scrollHeight;
+                    const editorTotalH = aceInstance.session.getScreenLength() * aceInstance.renderer.lineHeight;
+                    let pct = contentY / minimapTotalH;
+                    pct = Math.max(0, Math.min(1, pct));
+                    const targetScrollTop = pct * editorTotalH;
+                    aceInstance.session.setScrollTop(targetScrollTop - (aceInstance.renderer.$size.scrollerHeight / 2));
+                };
+
+                const onMinimapMouseDown = (e) => {
+                    isDraggingMinimap = true;
+                    scrollToPositionFromMinimap(e);
+                    document.addEventListener('mousemove', onMinimapMouseMove);
+                    document.addEventListener('mouseup', onMinimapMouseUp);
+                };
+                const onMinimapMouseMove = (e) => { if (isDraggingMinimap) { e.preventDefault(); scrollToPositionFromMinimap(e); } };
+                const onMinimapMouseUp = () => { isDraggingMinimap = false; document.removeEventListener('mousemove', onMinimapMouseMove); document.removeEventListener('mouseup', onMinimapMouseUp); };
+                
+                // --- Init Ace Editor ---
+                const initAce = () => {
+                    aceInstance = ace.edit("ace-editor");
+                    aceInstance.setTheme(darkMode.value ? "ace/theme/tomorrow_night" : "ace/theme/chrome");
+                    aceInstance.session.setMode("ace/mode/markdown");
+                    aceInstance.setValue(activeContent.value, -1);
+                    aceInstance.setOptions({
+                        showLineNumbers: true,
+                        showPrintMargin: false,
+                        highlightActiveLine: true,
+                        wrap: true,
+                        useWorker: false 
+                    });
+
+                    // Keyboard Shortcuts untuk Find & Replace Modal
+                    aceInstance.commands.addCommand({
+                        name: "find",
+                        bindKey: {win: "Ctrl-F", mac: "Command-F"},
+                        exec: function(editor) { openFindModal(false); }
+                    });
+                    aceInstance.commands.addCommand({
+                        name: "replace",
+                        bindKey: {win: "Ctrl-H", mac: "Command-Option-F"},
+                        exec: function(editor) { openFindModal(true); }
+                    });
+
+                    aceInstance.on('change', () => {
+                        if (isSwitchingTab) return; 
+                        const doc = docs.value.find(d => d.id === activeDocId.value);
+                        if (doc) { doc.content = aceInstance.getValue(); }
+                        nextTick(() => { updateMinimap(aceInstance.session.getScrollTop()); });
+                    });
+
+                    aceInstance.session.on('changeScrollTop', (scrollTop) => {
+                        updateMinimap(scrollTop);
+                        if (isSyncing || !isLargeScreen.value || !previewContainer.value || !showPreview.value) return;
+                        isSyncing = true;
+                        const pct = scrollTop / (aceInstance.session.getScreenLength() * aceInstance.renderer.lineHeight - aceInstance.renderer.$size.scrollerHeight);
+                        const preview = previewContainer.value;
+                        preview.scrollTop = pct * (preview.scrollHeight - preview.clientHeight);
+                        setTimeout(() => { isSyncing = false; }, 50);
+                    });
+                    
+                    setTimeout(() => { updateMinimap(0); }, 100);
+                };
+
+                const handlePreviewScroll = () => {
+                    if (isSyncing || !isLargeScreen.value || !aceInstance || !showPreview.value) return;
+                    isSyncing = true;
+                    const preview = previewContainer.value;
+                    const pct = preview.scrollTop / (preview.scrollHeight - preview.clientHeight);
+                    const scrollTop = pct * (aceInstance.session.getScreenLength() * aceInstance.renderer.lineHeight - aceInstance.renderer.$size.scrollerHeight);
+                    aceInstance.session.setScrollTop(scrollTop);
+                    setTimeout(() => { isSyncing = false; }, 50);
+                };
+
+                // --- File Handlers ---
+                const triggerFileInput = () => fileInput.value.click();
+                const readFile = (file) => {
+                    if (!file || (!file.name.endsWith('.md') && !file.name.endsWith('.txt'))) return;
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const content = e.target.result;
+                        createDoc(file.name, content); 
+                    };
+                    reader.readAsText(file);
+                };
+                const handleFileUpload = (event) => { readFile(event.target.files[0]); event.target.value = ''; };
+                
+                const onDragEnter = () => { dragCounter++; isDragging.value = true; nextTick(() => lucide.createIcons()); };
+                const onDragLeave = () => { dragCounter--; if (dragCounter <= 0) { isDragging.value = false; dragCounter = 0; } };
+                const onDragOver = () => { isDragging.value = true; };
+                const onDrop = (event) => { 
+                    isDragging.value = false; 
+                    dragCounter = 0; 
+                    for(let i=0; i<event.dataTransfer.files.length; i++){ readFile(event.dataTransfer.files[i]); }
+                };
+
+                const insertFormatting = (prefix, suffix) => {
+                    if (!aceInstance) return;
+                    const selectedText = aceInstance.getSelectedText();
+                    aceInstance.insert(prefix + selectedText + suffix);
+                    aceInstance.focus();
+                };
+
+                const exportFile = (type) => {
+                    const doc = docs.value.find(d => d.id === activeDocId.value);
+                    if (!doc) return;
+                    let content = '';
+                    let fileName = doc.name;
+                    if (type === 'md') {
+                        content = doc.content;
+                    } else {
+                        fileName = fileName.replace(/\.md$/, '') + '.html';
+                        const themeCss = darkMode.value 
+                            ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css' 
+                            : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+                        content = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${doc.name}</title><script src="https://cdn.tailwindcss.com?plugins=typography"><\/script><link rel="stylesheet" href="${themeCss}"><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"><\/script><script>document.addEventListener('DOMContentLoaded', () => { hljs.highlightAll(); });<\/script></head><body class="p-10"><article class="prose prose-blue max-w-none prose-pre:p-0 prose-pre:bg-transparent prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700">${sanitizedHtml.value}</article></body></html>`;
+                    }
+                    const blob = new Blob([content], { type: type === 'md' ? 'text/markdown' : 'text/html' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = fileName;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                };
+
+                onMounted(() => {
+                    initAce();
+                    lucide.createIcons();
+                    document.addEventListener('click', closeMenuOutside);
+                    window.addEventListener('resize', () => { 
+                        isLargeScreen.value = window.innerWidth >= 640;
+                        if (aceInstance) aceInstance.resize();
+                        updateMinimap(aceInstance ? aceInstance.session.getScrollTop() : 0);
+                    });
+                });
+
+                onUnmounted(() => {
+                    document.removeEventListener('click', closeMenuOutside);
+                });
+
+                return {
+                    docs, activeDocId, activeContent, switchDoc, closeDoc, createDoc,
+                    sanitizedHtml, darkMode, activeTab, isLargeScreen,
+                    fileInput, isDragging, lineCount, previewContainer,
+                    minimapContainer, minimapScrollWrapper, minimapSlider, minimapContent,
+                    toggleDarkMode, triggerFileInput, handleFileUpload,
+                    insertFormatting, exportFile, handlePreviewScroll,
+                    onDragEnter, onDragLeave, onDragOver, onDrop, onMinimapMouseDown,
+                    // Menu & Tools Refs
+                    activeMenu, toggleMenu, showPreview,
+                    showFindModal, isReplaceMode, findText, replaceText, findInputRef,
+                    openFindModal, closeFindModal, doFind, findNext, findPrev, doReplace, doReplaceAll
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
